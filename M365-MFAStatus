@@ -8,7 +8,8 @@ $HuduBaseDomain = "https://your.hudu.domain"
 $HuduAssetLayoutName = "Azure AD - MFAStatus"
 #####################################################################
 ########################## Azure AD ###########################
-#CustomerExclude must use tenantID ! not displayname!
+# Might need to add Policy.Read.All for Delegated and Application or Reports.Read.All for delegated and application.
+#CustomerExclude must use tenantID ! not displayname! if you want to exclude.
 $customerExclude =@("Example Customer 1","Example Customer 2")
 $ApplicationId = "Your-App-ID"
 $ApplicationSecret = ConvertTo-SecureString -AsPlainText "Your App Secret" -Force
