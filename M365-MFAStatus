@@ -1,0 +1,255 @@
+# Based on the original script by lwhitelock https://github.com/lwhitelock/HuduAutomation/tree/main/CyberdrainRewrite
+# and msp4msps https://github.com/msp4msps/Syncro-Documentation/blob/main/Microsoft_Syncro_MFAStatus.ps1
+#####################################################################
+# Get a Hudu API Key from https://yourhududomain.com/admin/api_keys
+$HuduAPIKey = "abcdefght1234567890"
+# Set the base domain of your Hudu instance without a trailing /
+$HuduBaseDomain = "https://your.hudu.domain"
+$HuduAssetLayoutName = "Azure AD - MFAStatus"
+#####################################################################
+########################## Azure AD ###########################
+#CustomerExclude must use tenantID ! not displayname!
+$customerExclude =@("Example Customer 1","Example Customer 2")
+$ApplicationId = "Your-App-ID"
+$ApplicationSecret = ConvertTo-SecureString -AsPlainText "Your App Secret" -Force
+$TenantID = "Your Tenant ID"
+$RefreshToken = "Long refresh token"
+$upn = 'The user upn you created the app with'
+
+# Check if the MSOnline PowerShell module has already been loaded.
+if ( ! ( Get-Module MSOnline) ) {
+    # Check if the MSOnline PowerShell module is installed.
+    if ( Get-Module -ListAvailable -Name MSOnline ) {
+        Write-Host -ForegroundColor Green "Loading the Azure AD PowerShell module..."
+        Import-Module MsOnline
+    } else {
+        Install-Module MsOnline
+    }
+}
+
+#Get the Hudu API Module if not installed
+if (Get-Module -ListAvailable -Name HuduAPI) {
+		Import-Module HuduAPI 
+	} else {
+		Install-Module HuduAPI -Force
+		Import-Module HuduAPI
+	}
+  
+
+#Connect to your Azure AD Account.
+$credential = New-Object System.Management.Automation.PSCredential($ApplicationId, $ApplicationSecret)
+$aadGraphToken = New-PartnerAccessToken -ApplicationId $ApplicationId -Credential $credential -RefreshToken $refreshToken -Scopes 'https://graph.windows.net/.default' -ServicePrincipal -Tenant $tenantID
+$graphToken = New-PartnerAccessToken -ApplicationId $ApplicationId -Credential $credential -RefreshToken $refreshToken -Scopes 'https://graph.microsoft.com/.default' -ServicePrincipal -Tenant $tenantID
+
+
+Connect-MsolService -AdGraphAccessToken $aadGraphToken.AccessToken -MsGraphAccessToken $graphToken.AccessToken
+
+$customers = Get-MsolPartnerContract -All
+
+Write-Host "Found $($customers.Count) customers in Partner Center." -ForegroundColor DarkGreen
+
+#Set Hudu logon information
+New-HuduAPIKey $HuduAPIKey
+New-HuduBaseUrl $HuduBaseDomain
+
+#############################################################
+#                     Layout defenition                     #
+#############################################################
+
+$Layout = Get-HuduAssetLayouts -name $HuduAssetLayoutName
+
+if (!$Layout) { 
+    $AssetLayoutFields = @(
+        
+        
+        
+        #######################################################
+        # $customer_tenantID & PrimaryDomain starts here
+        @{
+            label        = 'Tenant ID'
+            field_type   = 'RichText'
+            show_in_list = 'false'
+            position     = 1
+        },
+        @{
+            label        = 'Primary Domain Name'
+            field_type   = 'RichText'
+            show_in_list = 'false'
+            position     = 2
+        },
+        #######################################################
+        #  $tenantObj starts here
+        @{
+            label        = 'Customer Info'
+            field_type   = 'RichText'
+            show_in_list = 'true'
+            position     = 3
+        },
+        #######################################################
+        #  $UserObj starts here
+        @{
+            label        = 'Users'
+            field_type   = 'RichText'
+            show_in_list = 'false'
+            position     = 4
+        },
+        #######################################################
+        # $conditionalAccessObj starts here
+        @{
+            label        = 'Conditional'
+            field_type   = 'RichText'
+            show_in_list = 'false'
+            position     = 5
+        },
+        #######################################################
+        #  $customObj starts here
+        #Customcontrol is not configured but can watch msp4msps link in first lines. for 3rd party MFA.
+        @{
+            label        = 'CustomControl'
+            field_type   = 'RichText'
+            show_in_list = 'false'
+            position     = 6
+        }
+    )
+
+    
+    Write-Host "Creating New Asset Layout"                              
+    $NewLayout = New-HuduAssetLayout -name $HuduAssetLayoutName -icon "fas fa-sitemap" -color "#00adef" -icon_color "#000000" -include_passwords $false -include_photos $false -include_comments $false -include_files $false -fields $AssetLayoutFields
+    $Layout = Get-HuduAssetLayouts -name $HuduAssetLayoutName
+}
+
+
+foreach ($customer in $customers) {
+
+    #Check if customer should be excluded
+	if (-Not ($customerExclude -contains $customer.DisplayName)){
+        #First lets check for the company
+		#Check if they are in Hudu before doing any unnessisary work
+		$defaultdomain = $customer.DefaultDomainName
+		$hududomain = Get-HuduWebsites -name "https://$defaultdomain"
+		if ($($hududomain.id.count) -gt 0) {
+
+    Write-Host "Found $($customer.Name) in Partner Center" -ForegroundColor Green
+    $CustomerToken = New-PartnerAccessToken -ApplicationId $ApplicationId -Credential $credential -RefreshToken $refreshToken -Scopes 'https://graph.microsoft.com/.default' -Tenant $customer.TenantID
+    $headers = @{ "Authorization" = "Bearer $($CustomerToken.AccessToken)" }
+    $domain = $customer.DefaultDomainName
+    $customerdomains = Get-MsolDomain -TenantId $customer.TenantID
+    $PrimaryDomain = ($customerdomains | Where-Object { $_.IsDefault -eq $true }).name
+    $Users = (Invoke-RestMethod -Uri 'https://graph.microsoft.com/v1.0/users?$top=999' -Headers $Headers -Method Get -ContentType "application/json").value | Select-Object DisplayName, proxyaddresses, AssignedLicenses, userprincipalname
+    $MFAStatus = Get-MsolUser -all -TenantId $customer.TenantId | Select-Object DisplayName,UserPrincipalName,@{N="MFA Status"; E={if( $_.StrongAuthenticationRequirements.State -ne $null) {$_.StrongAuthenticationRequirements.State} else { "Disabled"}}}
+    
+    
+    write-host "Grabbing Potential Conditional Access MFA Registration for $($Customer.name)" -ForegroundColor Green
+    try{
+    $uri = "https://graph.microsoft.com/beta/reports/credentialUserRegistrationDetails"
+    $MFA2 = (Invoke-RestMethod -Uri $uri -Headers $headers -Method Get).value | Select-Object userPrincipalName, isMfaRegistered, @{N="MFA Registration Status"; E={if( $_.isMfaRegistered -ne $null) {$_.isMfaRegistered } else { "Disabled"}}}
+    } catch {
+    Write-Host "$($customer.name) does not have Azure AD P1 licensing, kinda stupid"
+    }
+
+
+            write-host "Grabbing Conditional Access Policies $($Customer.name)" -ForegroundColor Green
+    try{
+    $CAPolicy = (Invoke-RestMethod -Uri 'https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies?$count=true' -Headers $Headers -Method Get -ContentType "application/json").value| Select-Object count, grantControls, displayName
+    $CAPolicy2 = $CAPolicy.grantControls
+    $duoMFA = $CAPolicy2. customAuthenticationFactors
+    $customer | Add-Member ConditionalAccessPolicies $CAPolicy.count
+    $customer | Add-Member CustomControl $duoMFA
+    } catch {
+       Write-Host "$($customer.name) does not have Azure AD P1 licensing, lmao"
+    }
+
+
+    write-host "Grabbing Security Defaults Policy for $($Customer.name)" -ForegroundColor Green
+    $uri = "https://graph.microsoft.com/v1.0/policies/identitySecurityDefaultsEnforcementPolicy"
+    $Data2 = Invoke-RestMethod -Uri $uri -Headers $Headers -Method Get | Select-Object isEnabled
+    $customer | Add-Member SecurityDefaultsEnabled $Data2.isEnabled
+
+    $UserObj = foreach ($user in $users) {
+        [PSCustomObject]@{
+            'Display name'      = $user.displayname
+            'Mail'              =$user.userPrincipalName
+            "Legacy MFA Enabled"       = ($MFAStatus | Where-Object { $_.UserPrincipalName -eq $user.userPrincipalName}).'MFA Status'
+            "MFA Registered through Security Defaults or CA Policy" = ($MFA2 | where-object { $_.userPrincipalName -eq $user.userPrincipalName}).'MFA Registration Status'
+        }
+         $tenantObj= [PSCustomObject]@{
+          'Customer Name' = $customer.name
+          'Security Defaults Enabled' = $customer.SecurityDefaultsEnabled
+          'Conditional Access Policies' = $customer.ConditionalAccessPolicies
+      } 
+    $conditionalAccessObj = foreach ($policy in $CAPolicy) {
+        [PSCustomObject]@{
+            'Conditional  Access Policy' = $policy.displayname
+        }
+        
+    $customObj = [PSCustomObject]@{
+            'CustomControl'  = $CAPolicy.grantControls.customAuthenticationFactors
+        }
+    }
+}
+
+
+
+################################################################
+#    Table to hudu
+################################################################
+
+    $TableHeader = "<table style=`"width: 100%; border-collapse: collapse; border: 1px solid black;`">"
+	$Whitespace = "<br/>"
+	$TableStyling = "<th>", "<th style=`"background-color:#00adef; border: 1px solid black;`">"
+  
+    # formatting the script info from API to HTML Table
+    # use select-object if you dont want every object from variable.
+
+    # Tenant ID
+    $customer_tenantID = $customer.$TenantID | convertto-html -fragment | out-string
+    $customer_tenantID = $TableHeader + ($customer_tenantID -replace $TableStyling) + $Whitespace
+
+    # Normal users
+    $NormalUsers = $userobj | ConvertTo-Html -Fragment | Out-String
+	$NormalUsers = $TableHeader + ($NormalUsers -replace $TableStyling) + $Whitespace
+
+    # Tenant - and info about tenant
+    $tenantObj = $tenantObj | select-object 'Customer Name', 'Security Defaults Enabled','Conditional Access Policies' | convertto-html -Fragment  | out-string
+    $tenantObj = $TableHeader + ($tenantObj -replace $TableStyling) + $Whitespace
+
+    # Conditional Access. 
+    $conditionalAccessObj = $conditionalAccessObj | select-object 'Conditional  Access Policy' | convertto-html -Fragment  | out-string
+    $conditionalAccessObj = $TableHeader + ($conditionalAccessObj -replace $TableStyling) + $Whitespace
+
+    # Custom (if they use 3rd party tools)
+    $customObj = $customObj | select-object 'CustomControl' | convertto-html -Fragment  | out-string
+    $customObj = $TableHeader + ($customObj -replace $TableStyling) + $Whitespace
+
+
+    
+
+			# Populate Asset Fields
+			$AssetFields = @{
+                'primary_domain_name' = $PrimaryDomain
+				'Tenant ID'           = $customer.TenantId
+				'users'               = $NormalUsers
+				'Customer info'       = $tenantObj
+				'Conditional'         = $conditionalAccessObj
+				'CustomControl'       = $customObj
+			}
+	
+			$companyid = $hududomain.company_id
+			#Check if there is already an asset	
+			$Asset = Get-HuduAssets -name $PrimaryDomain -companyid $companyid -assetlayoutid $Layout.id
+	
+			#If the Asset does not exist, we edit the body to be in the form of a new asset, if not, we just upload.
+			if (!$Asset) {
+				Write-Host "Creating new Asset"
+				$Asset = New-HuduAsset -name $PrimaryDomain -company_id $companyid -asset_layout_id $Layout.id -fields $AssetFields	
+			}
+			else {
+				Write-Host "Updating Asset"
+				$Asset = Set-HuduAsset -asset_id $Asset.id -name $PrimaryDomain -company_id $companyid -asset_layout_id $layout.id -fields $AssetFields	
+			}
+														
+		} else {
+			write-host "https://$defaultdomain Not found in Hudu. Please add as a website under the relevant customer" -ForegroundColor Red
+		}
+	}
+}
