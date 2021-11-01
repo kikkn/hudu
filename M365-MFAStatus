@@ -54,68 +54,77 @@ New-HuduAPIKey $HuduAPIKey
 New-HuduBaseUrl $HuduBaseDomain
 
 #############################################################
-#                     Layout defenition                     #
+#                     Layout defenition                    #
 #############################################################
 
 $Layout = Get-HuduAssetLayouts -name $HuduAssetLayoutName
 
+
+
 if (!$Layout) { 
     $AssetLayoutFields = @(
         
-        
-        
-        #######################################################
+          #######################################################
         # $customer_tenantID & PrimaryDomain starts here
+        #######################################################
+       #
+        @{
+            label        = 'Siste Sync'
+            field_type   = 'RichText'
+            show_in_list = 'false'
+            position     = 1
+        },
+        #######################################################
+        #
         @{
             label        = 'Tenant ID'
             field_type   = 'RichText'
             show_in_list = 'false'
-            position     = 1
+            position     = 2
         },
         @{
             label        = 'Primary Domain Name'
             field_type   = 'RichText'
             show_in_list = 'false'
-            position     = 2
-        },
-        #######################################################
-        #  $tenantObj starts here
-        @{
-            label        = 'Customer Info'
-            field_type   = 'RichText'
-            show_in_list = 'true'
             position     = 3
         },
         #######################################################
-        #  $UserObj starts here
+        # 
         @{
-            label        = 'Users'
+            label        = 'Tenant info'
             field_type   = 'RichText'
-            show_in_list = 'false'
+            show_in_list = 'true'
             position     = 4
         },
         #######################################################
-        # $conditionalAccessObj starts here
+        # 
         @{
-            label        = 'Conditional'
+            label        = 'Users'
             field_type   = 'RichText'
             show_in_list = 'false'
             position     = 5
         },
         #######################################################
-        #  $customObj starts here
-        #Customcontrol is not configured but can watch msp4msps link in first lines. for 3rd party MFA.
+        # 
+        @{
+            label        = 'Conditional'
+            field_type   = 'RichText'
+            show_in_list = 'false'
+            position     = 6
+        },
+        #######################################################
+        # 
         @{
             label        = 'CustomControl'
             field_type   = 'RichText'
             show_in_list = 'false'
-            position     = 6
+            position     = 7
         }
     )
 
-    
-    Write-Host "Creating New Asset Layout"                              
-    $NewLayout = New-HuduAssetLayout -name $HuduAssetLayoutName -icon "fas fa-sitemap" -color "#00adef" -icon_color "#000000" -include_passwords $false -include_photos $false -include_comments $false -include_files $false -fields $AssetLayoutFields
+    # Skriver layout rekkefølge (med html) til variablene under.
+    Write-Host "Creating New Asset Layout"                              #html stilsetting (CSS), og flags som sier hva slags vedlegg som er mulig å inkludere.
+    $NewLayout = New-HuduAssetLayout -name $HuduAssetLayoutName -icon "fas fa-sitemap" -color "#64FF69" -icon_color "#000000" -include_passwords $false -include_photos $false -include_comments $false -include_files $false -fields $AssetLayoutFields
     $Layout = Get-HuduAssetLayouts -name $HuduAssetLayoutName
 }
 
@@ -138,6 +147,7 @@ foreach ($customer in $customers) {
     $PrimaryDomain = ($customerdomains | Where-Object { $_.IsDefault -eq $true }).name
     $Users = (Invoke-RestMethod -Uri 'https://graph.microsoft.com/v1.0/users?$top=999' -Headers $Headers -Method Get -ContentType "application/json").value | Select-Object DisplayName, proxyaddresses, AssignedLicenses, userprincipalname
     $MFAStatus = Get-MsolUser -all -TenantId $customer.TenantId | Select-Object DisplayName,UserPrincipalName,@{N="MFA Status"; E={if( $_.StrongAuthenticationRequirements.State -ne $null) {$_.StrongAuthenticationRequirements.State} else { "Disabled"}}}
+    $SSPRstatus = get-msolcompanyinformation | Select-Object selfservepasswordresetenabled
     
     
     write-host "Grabbing Potential Conditional Access MFA Registration for $($Customer.name)" -ForegroundColor Green
@@ -182,12 +192,27 @@ foreach ($customer in $customers) {
         [PSCustomObject]@{
             'Conditional Access Policy' = $policy.displayname
         }
-        
+
     $customObj = [PSCustomObject]@{
             'CustomControl'  = $CAPolicy.grantControls.customAuthenticationFactors
         }
     }
 }
+
+#######################################################################
+#  creates a custom object, composed of 2 other objects / variables  #
+#######################################################################
+
+
+$Merge = @(
+    #lager dataen som skal inn i et objekt                                        #henter objekt-feltet vi ønsker fra "more data"
+    @{Customer_Name = ($Customer.name); Security_Default_Enabled = ($Customer.SecurityDefaultsEnabled); Conditional_Access_Policies = $($Customer.ConditionalAccessPolicies); Self_service_password_reset = $($SSPRstatus.SelfServePasswordResetEnabled) }) | % { New-Object object | Add-Member -NotePropertyMembers $_ -PassThru }
+
+       #formaterer objektet til en tabell
+$TenantInfo = $Merge | Format-Table | Out-String
+
+#printer tabellen
+#$TenantInfo
 
 
 
@@ -196,11 +221,20 @@ foreach ($customer in $customers) {
 ################################################################
 
     $TableHeader = "<table style=`"width: 100%; border-collapse: collapse; border: 1px solid black;`">"
-	$Whitespace = "<br/>"
-	$TableStyling = "<th>", "<th style=`"background-color:#00adef; border: 1px solid black;`">"
-  
-    # formatting the script info from API to HTML Table
+    $Whitespace = "<br/>"
+    $TableStyling = "<th>", "<th style=`"background-color: #00adef; border: 1px solid black;`">"
+    #formatting the script info from API to HTML Table
     # use select-object if you dont want every object from variable.
+
+
+    
+    
+    $today = Get-Date
+   
+    # Siste sync
+    $lastsync = $today | Select-Object 'DateTime' | convertto-html -fragment | out-string
+    $lastsync = $TableHeader + ($today -replace $TableStyling) + $Whitespace
+    
 
     # Tenant ID
     $customer_tenantID = $customer.$TenantID | convertto-html -fragment | out-string
@@ -210,15 +244,15 @@ foreach ($customer in $customers) {
     $NormalUsers = $userobj | ConvertTo-Html -Fragment | Out-String
 	$NormalUsers = $TableHeader + ($NormalUsers -replace $TableStyling) + $Whitespace
 
-    # Tenant - and info about tenant
-    $tenantObj = $tenantObj | select-object 'Customer Name', 'Security Defaults Enabled','Conditional Access Policies' | convertto-html -Fragment  | out-string
+    # Tenant - og all info fra tenant | og bruker det objektet vi definerte på linje 206.
+    $tenantObj = $Merge | Select-Object 'Customer_Name', 'Security_Default_Enabled', 'Conditional_Access_Policies', 'Self_Service_Password_Reset' |  convertto-html -Fragment  | out-string
     $tenantObj = $TableHeader + ($tenantObj -replace $TableStyling) + $Whitespace
 
-    # Conditional Access. 
-    $conditionalAccessObj = $conditionalAccessObj | select-object 'Conditional  Access Policy' | convertto-html -Fragment  | out-string
+    # Conditional Access. (Tilgangs Policies)
+    $conditionalAccessObj = $conditionalAccessObj | select-object 'Conditional Access Policy' | convertto-html -Fragment  | out-string
     $conditionalAccessObj = $TableHeader + ($conditionalAccessObj -replace $TableStyling) + $Whitespace
 
-    # Custom (if they use 3rd party tools)
+    # Custom (om de bruker 3rd party tools)
     $customObj = $customObj | select-object 'CustomControl' | convertto-html -Fragment  | out-string
     $customObj = $TableHeader + ($customObj -replace $TableStyling) + $Whitespace
 
@@ -227,12 +261,13 @@ foreach ($customer in $customers) {
 
 			# Populate Asset Fields
 			$AssetFields = @{
-                'primary_domain_name' = $PrimaryDomain
-				'Tenant ID'           = $customer.TenantId
-				'users'               = $NormalUsers
-				'Customer info'       = $tenantObj
-				'Conditional'         = $conditionalAccessObj
-				'CustomControl'       = $customObj
+                'Siste Sync'           = $lastsync
+                'primary_domain_name'  = $PrimaryDomain
+				'Tenant ID'            = $customer.TenantId
+				'users'                = $NormalUsers
+				'Tenant_info'          = $tenantObj
+				'Conditional'          = $conditionalAccessObj
+				'CustomControl'        = $customObj
 			}
 	
 			$companyid = $hududomain.company_id
