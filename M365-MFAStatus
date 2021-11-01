@@ -180,7 +180,7 @@ foreach ($customer in $customers) {
       } 
     $conditionalAccessObj = foreach ($policy in $CAPolicy) {
         [PSCustomObject]@{
-            'Conditional  Access Policy' = $policy.displayname
+            'Conditional Access Policy' = $policy.displayname
         }
         
     $customObj = [PSCustomObject]@{
