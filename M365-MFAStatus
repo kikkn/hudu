@@ -1,21 +1,20 @@
-# Based on the original script by lwhitelock https://github.com/lwhitelock/HuduAutomation/tree/main/CyberdrainRewrite
-# and msp4msps https://github.com/msp4msps/Syncro-Documentation/blob/main/Microsoft_Syncro_MFAStatus.ps1
+# Based on the original script by Kelvin Tegelaar https://github.com/KelvinTegelaar/AutomaticDocumentation
 #####################################################################
 # Get a Hudu API Key from https://yourhududomain.com/admin/api_keys
-$HuduAPIKey = "abcdefght1234567890"
+$HuduAPIKey = ""
 # Set the base domain of your Hudu instance without a trailing /
-$HuduBaseDomain = "https://your.hudu.domain"
-$HuduAssetLayoutName = "Azure AD - MFAStatus"
+$HuduBaseDomain = "https://docs.backit.no/"
+$HuduAssetLayoutName = "M365 - MFAStatus"
 #####################################################################
 ########################## Azure AD ###########################
-# Might need to add Policy.Read.All for Delegated and Application or Reports.Read.All for delegated and application.
-#CustomerExclude must use tenantID ! not displayname! if you want to exclude.
-$customerExclude =@("Example Customer 1","Example Customer 2")
-$ApplicationId = "Your-App-ID"
-$ApplicationSecret = ConvertTo-SecureString -AsPlainText "Your App Secret" -Force
-$TenantID = "Your Tenant ID"
-$RefreshToken = "Long refresh token"
-$upn = 'The user upn you created the app with'
+$customerExclude =@("Example Cuystomer 1","Example Customer 4")
+$ApplicationId = ""
+$ApplicationSecret = ConvertTo-SecureString -AsPlainText "" -Force
+$TenantID = ""
+$RefreshToken = ""
+#notused
+#$ExchangeRefreshToken = ""
+$upn = ''
 
 # Check if the MSOnline PowerShell module has already been loaded.
 if ( ! ( Get-Module MSOnline) ) {
@@ -45,7 +44,7 @@ $graphToken = New-PartnerAccessToken -ApplicationId $ApplicationId -Credential $
 
 Connect-MsolService -AdGraphAccessToken $aadGraphToken.AccessToken -MsGraphAccessToken $graphToken.AccessToken
 
-$customers = Get-MsolPartnerContract -All
+$customers = Get-MsolPartnerContract -all
 
 Write-Host "Found $($customers.Count) customers in Partner Center." -ForegroundColor DarkGreen
 
@@ -54,7 +53,7 @@ New-HuduAPIKey $HuduAPIKey
 New-HuduBaseUrl $HuduBaseDomain
 
 #############################################################
-#                     Layout defenition                    #
+#                     Layout definering                     #
 #############################################################
 
 $Layout = Get-HuduAssetLayouts -name $HuduAssetLayoutName
@@ -64,10 +63,10 @@ $Layout = Get-HuduAssetLayouts -name $HuduAssetLayoutName
 if (!$Layout) { 
     $AssetLayoutFields = @(
         
-          #######################################################
-        # $customer_tenantID & PrimaryDomain starts here
+        # "show_in_list" bestemmer hvilke felder som er synn lige i Layout som lister kunder.
+        # den rÃ¸rer ikke synlighet for selve tabellene med data.
         #######################################################
-       #
+        # Her starter $sistesync
         @{
             label        = 'Siste Sync'
             field_type   = 'RichText'
@@ -75,7 +74,7 @@ if (!$Layout) {
             position     = 1
         },
         #######################################################
-        #
+        # Her starter $customer_tenantID & PrimaryDomain
         @{
             label        = 'Tenant ID'
             field_type   = 'RichText'
@@ -89,7 +88,7 @@ if (!$Layout) {
             position     = 3
         },
         #######################################################
-        # 
+        # Her starter $tenantObj
         @{
             label        = 'Tenant info'
             field_type   = 'RichText'
@@ -97,7 +96,7 @@ if (!$Layout) {
             position     = 4
         },
         #######################################################
-        # 
+        # Her starter $UserObj
         @{
             label        = 'Users'
             field_type   = 'RichText'
@@ -105,7 +104,7 @@ if (!$Layout) {
             position     = 5
         },
         #######################################################
-        # 
+        # Her starter $conditionalAccessObj
         @{
             label        = 'Conditional'
             field_type   = 'RichText'
@@ -113,7 +112,7 @@ if (!$Layout) {
             position     = 6
         },
         #######################################################
-        # 
+        # Her starter $customObj
         @{
             label        = 'CustomControl'
             field_type   = 'RichText'
@@ -122,8 +121,8 @@ if (!$Layout) {
         }
     )
 
-    # Skriver layout rekkefølge (med html) til variablene under.
-    Write-Host "Creating New Asset Layout"                              #html stilsetting (CSS), og flags som sier hva slags vedlegg som er mulig å inkludere.
+    # Skriver layout rekkefÃ¸lge (med html) til variablene under.
+    Write-Host "Creating New Asset Layout"                              #html stilsetting (CSS), og flags som sier hva slags vedlegg som er mulig Ã¥ inkludere.
     $NewLayout = New-HuduAssetLayout -name $HuduAssetLayoutName -icon "fas fa-sitemap" -color "#64FF69" -icon_color "#000000" -include_passwords $false -include_photos $false -include_comments $false -include_files $false -fields $AssetLayoutFields
     $Layout = Get-HuduAssetLayouts -name $HuduAssetLayoutName
 }
@@ -153,15 +152,16 @@ foreach ($customer in $customers) {
     write-host "Grabbing Potential Conditional Access MFA Registration for $($Customer.name)" -ForegroundColor Green
     try{
     $uri = "https://graph.microsoft.com/beta/reports/credentialUserRegistrationDetails"
-    $MFA2 = (Invoke-RestMethod -Uri $uri -Headers $headers -Method Get).value | Select-Object userPrincipalName, isMfaRegistered, @{N="MFA Registration Status"; E={if( $_.isMfaRegistered -ne $null) {$_.isMfaRegistered } else { "Disabled"}}}
-    } catch {
+    #old one $MFA2 = (Invoke-RestMethod -Uri $uri -Headers $headers -Method Get).value | Select-Object userPrincipalName, isMfaRegistered, @{N="MFA Registration Status"; E={if( $_.isMfaRegistered -ne $null) {$_.isMfaRegistered } else { "Disabled"}}}
+    $MFA2 = (Invoke-RestMethod -Uri $uri -Headers $headers -Method Get).value | Select-Object userPrincipalName, isMfaRegistered, @{N="MFA Registration Status"; E={if( $_.isMfaRegistered -ne $null) {$_.isMfaRegistered } else { "Disabled"}}}, authMethods,@{N="AuthMethods Status"; E={if( $_.AuthMethods -ne $null) {$_.AuthMethods } else { "None"}}}, isRegistered,@{N="Registered for SSPR"; E={if( $_.isRegistered -ne $null) {$_.isRegistered }}}, isEnabled, @{N="SSPR Active"; E={if( $_.isEnabled -ne $null) {$_.isEnabled }}}
+} catch {
     Write-Host "$($customer.name) does not have Azure AD P1 licensing, kinda stupid"
     }
 
 
             write-host "Grabbing Conditional Access Policies $($Customer.name)" -ForegroundColor Green
     try{
-    $CAPolicy = (Invoke-RestMethod -Uri 'https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies?$count=true' -Headers $Headers -Method Get -ContentType "application/json").value| Select-Object count, grantControls, displayName
+    $CAPolicy = (Invoke-RestMethod -Uri 'https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies?$count=true' -Headers $Headers -Method Get -ContentType "application/json").value| Select-Object count, grantControls, displayName, createdDateTime, modifiedDateTime, state
     $CAPolicy2 = $CAPolicy.grantControls
     $duoMFA = $CAPolicy2. customAuthenticationFactors
     $customer | Add-Member ConditionalAccessPolicies $CAPolicy.count
@@ -182,6 +182,9 @@ foreach ($customer in $customers) {
             'Mail'              =$user.userPrincipalName
             "Legacy MFA Enabled"       = ($MFAStatus | Where-Object { $_.UserPrincipalName -eq $user.userPrincipalName}).'MFA Status'
             "MFA Registered through Security Defaults or CA Policy" = ($MFA2 | where-object { $_.userPrincipalName -eq $user.userPrincipalName}).'MFA Registration Status'
+			"AuthMethods" = ($MFA2 | where-object { $_.userPrincipalName -eq $user.userPrincipalName}).'AuthMethods Status'
+            "Registered for SSPR" = ($MFA2 | where-object { $_.userPrincipalName -eq $user.userPrincipalName}).'Registered for SSPR'
+            "SSPR Enabled" = ($MFA2 | where-object { $_.userPrincipalName -eq $user.userPrincipalName}).'SSPR Active'
         }
          $tenantObj= [PSCustomObject]@{
           'Customer Name' = $customer.name
@@ -191,6 +194,9 @@ foreach ($customer in $customers) {
     $conditionalAccessObj = foreach ($policy in $CAPolicy) {
         [PSCustomObject]@{
             'Conditional Access Policy' = $policy.displayname
+            'State' = $policy.state
+            'Created Date' = $policy.createdDateTime
+            'Modified Date' = $policy.modifiedDateTime
         }
 
     $customObj = [PSCustomObject]@{
@@ -200,12 +206,12 @@ foreach ($customer in $customers) {
 }
 
 #######################################################################
-#  creates a custom object, composed of 2 other objects / variables  #
+#  lager et custom objekt, sammen satt av 2 andre objekter/variabler  #
 #######################################################################
 
 
 $Merge = @(
-    #lager dataen som skal inn i et objekt                                        #henter objekt-feltet vi ønsker fra "more data"
+    #lager dataen som skal inn i et objekt                                        #henter objekt-feltet vi Ã¸nsker fra "more data"
     @{Customer_Name = ($Customer.name); Security_Default_Enabled = ($Customer.SecurityDefaultsEnabled); Conditional_Access_Policies = $($Customer.ConditionalAccessPolicies); Self_service_password_reset = $($SSPRstatus.SelfServePasswordResetEnabled) }) | % { New-Object object | Add-Member -NotePropertyMembers $_ -PassThru }
 
        #formaterer objektet til en tabell
@@ -217,20 +223,21 @@ $TenantInfo = $Merge | Format-Table | Out-String
 
 
 ################################################################
-#    Table to hudu
+#    SKRIVER TABELLEN PÃ… HUDU
 ################################################################
 
     $TableHeader = "<table style=`"width: 100%; border-collapse: collapse; border: 1px solid black;`">"
     $Whitespace = "<br/>"
     $TableStyling = "<th>", "<th style=`"background-color: #00adef; border: 1px solid black;`">"
-    #formatting the script info from API to HTML Table
-    # use select-object if you dont want every object from variable.
+    # her formaterer skripet info fra api for variablene satt fÃ¸rst pr linje. slik at de passer til en HTML tabell
+    # den finner riktig plas fra API'et over via "select-object"
+    # om ikke man har et relect parameter, velger den all data fra Objektet
 
 
     
-    
+    #lagrer og formaterer print objektet
     $today = Get-Date
-   
+    #$printDato = write-host "Siste Sync: "  $today
     # Siste sync
     $lastsync = $today | Select-Object 'DateTime' | convertto-html -fragment | out-string
     $lastsync = $TableHeader + ($today -replace $TableStyling) + $Whitespace
@@ -244,12 +251,12 @@ $TenantInfo = $Merge | Format-Table | Out-String
     $NormalUsers = $userobj | ConvertTo-Html -Fragment | Out-String
 	$NormalUsers = $TableHeader + ($NormalUsers -replace $TableStyling) + $Whitespace
 
-    # Tenant - og all info fra tenant | og bruker det objektet vi definerte på linje 206.
+    # Tenant - og all info fra tenant | og bruker det objektet vi definerte pÃ¥ linje 206.
     $tenantObj = $Merge | Select-Object 'Customer_Name', 'Security_Default_Enabled', 'Conditional_Access_Policies', 'Self_Service_Password_Reset' |  convertto-html -Fragment  | out-string
     $tenantObj = $TableHeader + ($tenantObj -replace $TableStyling) + $Whitespace
 
     # Conditional Access. (Tilgangs Policies)
-    $conditionalAccessObj = $conditionalAccessObj | select-object 'Conditional Access Policy' | convertto-html -Fragment  | out-string
+    $conditionalAccessObj = $conditionalAccessObj | select-object 'Conditional Access Policy', 'State', 'Created Date','Modified Date'  | convertto-html -Fragment  | out-string
     $conditionalAccessObj = $TableHeader + ($conditionalAccessObj -replace $TableStyling) + $Whitespace
 
     # Custom (om de bruker 3rd party tools)
